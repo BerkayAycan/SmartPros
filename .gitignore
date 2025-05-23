@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg
+*.egg-info/
+dist/
+build/
+*.log
+
+# Virtual Environment
+venv/
+
+# dotenv (API anahtarları vs.)
+.env
+
+# IDE (VSCode, PyCharm, vs.) dosyaları
+.vscode/
+.idea/
+
+# MacOS sistemi dosyaları
+.DS_Store

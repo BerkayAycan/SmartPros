@@ -1,3 +1,6 @@
+from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 import requests
 import pdfplumber
@@ -8,104 +11,128 @@ from dotenv import load_dotenv
 from pathlib import Path
 import pytesseract
 from PIL import Image
-import sys
 import warnings
 import logging
+import sys
+import re
 
-# -------------------- Uyarıları kapat --------------------
 warnings.filterwarnings("ignore")
 logging.getLogger("pdfplumber").setLevel(logging.CRITICAL)
-sys.stderr = open(os.devnull, 'w')  # CropBox uyarılarını susturur
+sys.stderr = open(os.devnull, 'w')
 
-# -------------------- OCR yolu --------------------
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
-# -------------------- .env Yolu ve API --------------------
 env_path = Path(__file__).parents[1] / ".env"
 load_dotenv(dotenv_path=env_path, override=True)
 
 api_key = os.getenv("OPENAI_API_KEY")
-
-if api_key is None:
-    raise ValueError("OPENAI_API_KEY .env dosyasından okunamadı!")
-
 client = openai.OpenAI(api_key=api_key)
 
-# -------------------- CSV'yi oku --------------------
-df = pd.read_csv(r"C:\Users\Berkay\Desktop\bitirme projesi\proje\SmartPros\ai\data\DrugsData_cleaned.csv")
+app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-drug_name = input("Lütfen özetlemek istediğiniz ilacın adını girin: ")
+csv_path = Path(__file__).parents[1] / "data" / "DrugsData_cleaned.csv"
+df = pd.read_csv(csv_path)
 
-pdf_url = df[df['ilaç adı'].str.contains(drug_name, case=False, na=False)]['küb PDF'].values[0]
-print(f"\nSeçilen ilacın PDF linki: {pdf_url}")
+def extract_pdf_text(pdf_path):
+    with pdfplumber.open(pdf_path) as pdf:
+        all_text = ""
+        for page in pdf.pages:
+            text = page.extract_text()
+            if text:
+                all_text += text + "\n"
+            else:
+                image = page.to_image(resolution=300).original
+                ocr_text = pytesseract.image_to_string(image, lang="tur")
+                all_text += ocr_text + "\n"
+    return all_text.strip()
 
-headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
-}
+@app.get("/summary")
+def get_summary(
+    drug_name: str = Query(...),
+    gender: str = Query(None),
+    age: int = Query(None),
+    weight: float = Query(None)
+):
+    match = df[df["ilaç adı"].str.contains(drug_name, case=False, na=False)]
+    if match.empty:
+        return {"error": "İlaç bulunamadı."}
 
-response = requests.get(pdf_url, headers=headers, timeout=10)
+    pdf_url = match.iloc[0]["küb PDF"]
+    response = requests.get(pdf_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+    if response.status_code != 200:
+        return {"error": "PDF indirilemedi."}
 
-if response.status_code == 200:
     with open("temp_drug.pdf", "wb") as f:
         f.write(response.content)
-    print("\nProspektüs indirildi. İşleniyor... Lütfen bekleyin.\n")
-else:
-    print(f"PDF indirilemedi! Sunucu kodu: {response.status_code}")
-    exit()
 
-# -------------------- PDF'den metni oku --------------------
-with pdfplumber.open("temp_drug.pdf") as pdf:
-    pages = pdf.pages
-    all_text = ""
+    all_text = extract_pdf_text("temp_drug.pdf")
+    os.remove("temp_drug.pdf")
 
-    for idx, page in enumerate(pages):
-        page_text = page.extract_text()
-        if page_text:
-            all_text += page_text + "\n"
-        else:
-            pil_image = page.to_image(resolution=300).original
-            ocr_text = pytesseract.image_to_string(pil_image, lang="tur")
-            all_text += ocr_text + "\n"
+    if not all_text:
+        return {"error": "PDF içeriği boş veya okunamadı."}
 
-os.remove("temp_drug.pdf")
+    chunks = textwrap.wrap(all_text, width=2500)
+    collected_summaries = {}
 
-if not all_text.strip():
-    print("PDF'den metin okunamadı.")
-    exit()
+    for chunk in chunks:
+        prompt = (
+            "Sen bir sağlık asistanısın. Aşağıdaki prospektüs metnini özetle ve her özet bloğunu 'Kullanım Amacı' başlığına göre ayır. "
+            "Her blok şu başlıkları içermeli: Kullanım amacı, Doz ve sıklık, Alerjen içerikler, Yan etkiler, Kritik uyarılar. "
+            "Eğer içerik boşsa o başlığı yazma. Metin sade, kısa ve herkesin anlayacağı şekilde olmalı. Uzun teknik paragraflar olmasın. "
+            "Erkek kullanıcılar için hamilelik/emzirme bölümü tamamen çıkarılmalı.\n"
+            f"Kullanıcının cinsiyeti: {gender or 'belirtilmemiş'}\n"
+            f"Yaş: {age or 'belirtilmemiş'}\nKilo: {weight or 'belirtilmemiş'}\n\n"
+            f"Metin:\n{chunk}"
+        )
 
-# -------------------- Metni parçalara böl --------------------
-chunk_size = 3000
-text_chunks = textwrap.wrap(all_text, width=chunk_size)
+        res = client.chat.completions.create(
+            model="gpt-3.5-turbo-1106",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            max_tokens=700
+        )
+        content = res.choices[0].message.content
 
-# -------------------- Özetleme --------------------
-print("Özet hazırlanıyor... Lütfen bekleyin.\n")
+        usage_blocks = re.split(r"- Kullanım amacı\s*:", content)
+        if len(usage_blocks) > 1:
+            for block in usage_blocks[1:]:
+                lines = block.strip().split("\n")
+                title = lines[0].strip()
+                summary = "- " + "\n- ".join([
+                    line.strip(" -") for line in lines[1:]
+                    if "belirtilmemi" not in line.lower() and line.strip()
+                ])
+                if gender == "male":
+                    summary = re.sub(r"- Hamilelik.*?(\n|$)", "", summary, flags=re.IGNORECASE)
+                if title not in collected_summaries:
+                    collected_summaries[title] = summary
+        elif content.strip():
+            # fallback: içerik varsa ama regex tutmadıysa direkt olarak ekle
+            collected_summaries["Genel Bilgi"] = content.strip()
 
-summaries = []
+    if age and weight and collected_summaries:
+        dose = round(weight * 0.5)
+        last_key = list(collected_summaries.keys())[-1]
+        collected_summaries[last_key] += f"\n\n💡 Tahmini kullanım dozu: {dose} mL/gün (doktor onayı gereklidir)."
 
-for chunk in text_chunks:
-    response = client.chat.completions.create(
-        model="gpt-3.5-turbo-1106",
-        messages=[
-            {"role": "system", "content":
-             "Sen bir ilaç prospektüsü özetleyicisisin. Yalnızca şu bilgileri **madde madde** listele:\n"
-             "- Kullanım amacı\n"
-             "- Kullanım dozu ve sıklığı (varsa)\n"
-             "- Alerjen içerikler (varsa)\n"
-             "- Önemli yan etkiler ve tehlikeler\n"
-             "- Hamilelik/emzirme uyarıları\n"
-             "- Kritik uyarılar\n\n"
-             "**Kesinlikle** aşağıdaki bilgileri dahil etme: üretici, ruhsat sahibi, tarih, ruhsat numarası, kullanım talimatı dışındaki bilgiler.\n"
-             "Madde başına maksimum 20 kelime kullan. Gereksiz detayları çıkar."},
-            {"role": "user", "content": f"Şu metni özetle:\n\n{chunk}"}
-        ],
-        temperature=0,
-        max_tokens=500
+    if not collected_summaries:
+        return {"error": "Özet oluşturulamadı."}
+
+    return JSONResponse(
+        content={
+        "drugName": drug_name,
+        "summaries": collected_summaries,
+        "purposes": list(collected_summaries.keys())
+    },
+    media_type="application/json; charset=utf-8"
     )
 
-    summary = response.choices[0].message.content
-    summaries.append(summary)
-
-final_summary = "\n\n".join(summaries)
-
-print("\n✅ Özetlenen Prospektüs:\n")
-print(final_summary)
+@app.get("/")
+def root():
+    return {"status": "FastAPI ayakta"}
