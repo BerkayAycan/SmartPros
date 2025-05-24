@@ -16,8 +16,15 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Drug> filteredDrugs = [];
   String query = '';
   String? selectedGender;
+
   final TextEditingController ageController = TextEditingController();
   final TextEditingController weightController = TextEditingController();
+  final TextEditingController allergyController = TextEditingController();
+  final TextEditingController conditionController = TextEditingController();
+  final TextEditingController drugController = TextEditingController();
+
+  bool isPregnant = false;
+  bool isDriving = false;
 
   @override
   void initState() {
@@ -52,17 +59,19 @@ class _HomeScreenState extends State<HomeScreen> {
       gender: selectedGender,
       age: ageController.text,
       weight: weightController.text,
+      allergies: allergyController.text,
+      conditions: conditionController.text,
+      currentDrugs: drugController.text,
+      isPregnant: isPregnant,
+      isDriving: isDriving,
     );
 
     Navigator.pop(context);
 
-    debugPrint("🧪 Backend sonucu:\n$result");
-
     if (result != null &&
         result['drugName'] != null &&
         result['summaries'] != null &&
-        result['summaries'] is Map &&
-        (result['summaries'] as Map).isNotEmpty) {
+        result['summaries'] is Map<String, dynamic>) {
       final summariesMap = Map<String, String>.from(result['summaries']);
       Navigator.push(
         context,
@@ -75,7 +84,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
     } else {
-      debugPrint("⚠️ Özet verisi alınamadı. Backend dönüşü null ya da eksik.");
       showDialog(
         context: context,
         builder: (_) => AlertDialog(
@@ -96,61 +104,85 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text("İlaçlar")),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(10),
-            child: TextField(
+      body: Padding(
+        padding: const EdgeInsets.all(12),
+        child: ListView(
+          children: [
+            TextField(
               onChanged: filter,
               decoration: const InputDecoration(
                 labelText: 'İlaç Ara',
                 border: OutlineInputBorder(),
               ),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            child: DropdownButtonFormField<String>(
+            const SizedBox(height: 10),
+            DropdownButtonFormField<String>(
               decoration: const InputDecoration(labelText: "Cinsiyet"),
               value: selectedGender,
-              items: ['male', 'female']
+              items: ['erkek', 'kadın']
                   .map((g) => DropdownMenuItem(value: g, child: Text(g)))
                   .toList(),
-              onChanged: (val) => setState(() => selectedGender = val),
+              onChanged: (val) {
+                setState(() {
+                  selectedGender = val;
+                  if (val == 'erkek')
+                    isPregnant = false; // erkekse otomatik kapalı
+                });
+              },
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            child: TextField(
+            TextField(
               controller: ageController,
               keyboardType: TextInputType.number,
               decoration: const InputDecoration(labelText: "Yaş"),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            child: TextField(
+            TextField(
               controller: weightController,
               keyboardType: TextInputType.number,
               decoration: const InputDecoration(labelText: "Kilo (kg)"),
             ),
-          ),
-          Expanded(
-            child: ListView.builder(
-              itemCount: filteredDrugs.length,
-              itemBuilder: (_, index) {
-                final drug = filteredDrugs[index];
-                return ListTile(
-                  title: Text(drug.name),
-                  trailing: ElevatedButton(
-                    child: const Text("Özet"),
-                    onPressed: () => showSummary(drug.name),
-                  ),
-                );
-              },
+            TextField(
+              controller: allergyController,
+              decoration:
+                  const InputDecoration(labelText: "Alerjiler (virgülle)"),
             ),
-          ),
-        ],
+            TextField(
+              controller: conditionController,
+              decoration:
+                  const InputDecoration(labelText: "Hastalıklar (virgülle)"),
+            ),
+            SwitchListTile(
+              title: const Text("Hamile misiniz?"),
+              value: isPregnant,
+              onChanged: selectedGender == 'kadın'
+                  ? (val) => setState(() => isPregnant = val)
+                  : null, // disable switch if not kadın
+            ),
+            SwitchListTile(
+              title: const Text("Araç kullanıyor musunuz?"),
+              value: isDriving,
+              onChanged: (val) => setState(() => isDriving = val),
+            ),
+            TextField(
+              controller: drugController,
+              decoration: const InputDecoration(
+                  labelText: "Kullandığınız ilaçlar (virgülle)"),
+            ),
+            const SizedBox(height: 15),
+            const Divider(),
+            const Text("İlaç Listesi",
+                style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            ...filteredDrugs.map((drug) {
+              return ListTile(
+                title: Text(drug.name),
+                trailing: ElevatedButton(
+                  child: const Text("Özet"),
+                  onPressed: () => showSummary(drug.name),
+                ),
+              );
+            }).toList(),
+          ],
+        ),
       ),
     );
   }
