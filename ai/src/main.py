@@ -57,7 +57,12 @@ def get_summary(
     drug_name: str = Query(...),
     gender: str = Query(None),
     age: int = Query(None),
-    weight: float = Query(None)
+    weight: float = Query(None),
+    allergies: str = Query(None),
+    conditions: str = Query(None),
+    current_drugs: str = Query(None),
+    pregnant: bool = Query(None),
+    driving: bool = Query(None)
 ):
     match = df[df["ilaç adı"].str.contains(drug_name, case=False, na=False)]
     if match.empty:
@@ -82,20 +87,30 @@ def get_summary(
 
     for chunk in chunks:
         prompt = (
-            "Sen bir sağlık asistanısın. Aşağıdaki prospektüs metnini özetle ve her özet bloğunu 'Kullanım Amacı' başlığına göre ayır. "
-            "Her blok şu başlıkları içermeli: Kullanım amacı, Doz ve sıklık, Alerjen içerikler, Yan etkiler, Kritik uyarılar. "
-            "Eğer içerik boşsa o başlığı yazma. Metin sade, kısa ve herkesin anlayacağı şekilde olmalı. Uzun teknik paragraflar olmasın. "
-            "Erkek kullanıcılar için hamilelik/emzirme bölümü tamamen çıkarılmalı.\n"
-            f"Kullanıcının cinsiyeti: {gender or 'belirtilmemiş'}\n"
-            f"Yaş: {age or 'belirtilmemiş'}\nKilo: {weight or 'belirtilmemiş'}\n\n"
-            f"Metin:\n{chunk}"
+            "🔬 Sen bir sağlık asistanısın. Aşağıdaki prospektüs metnini özetle. Her özet bloğu, ilacın 'Kullanım Amacı' başlığına göre gruplanmalı.\n"
+            "📌 Özette aşağıdaki başlıklar yer almalı (her biri için mantıklı bir web emojisiyle başla):\n"
+            "💊 Kullanım amacı\n⏱️ Doz ve sıklık\n🧪 Alerjen içerikler\n🤕 Yan etkiler\n⚠️ Kritik uyarılar\n\n"
+            "❗❗❗ Dikkat:\n"
+            "- Ana kullanım amacı her zaman 'Genel Bilgi' başlığında yer almalı.\n"
+            "- Yan kullanım amaçları başka başlıklarda gruplanmalı.\n"
+            "- İçerik sade, anlaşılır ve kısa paragraflarla verilmeli.\n"
+            "- Teknik terimler azaltılmalı, herkesin anlayabileceği Türkçe kullanılmalı.\n"
+            "- Gereksiz tekrarlar, boş başlıklar ya da 'belirtilmemiş' gibi ifadeler kullanılmamalı.\n"
+            "- Emoji destekli, okunabilirliği yüksek liste formatı tercih edilmeli.\n"
+            "- Erkek kullanıcılar için hamilelik/emzirme bölümleri çıkartılmalı.\n"
+            "- Kullanıcı profili:\n"
+            f"👤 Cinsiyet: {gender or 'belirtilmemiş'}\n"
+            f"🎂 Yaş: {age or 'belirtilmemiş'}\n⚖️ Kilo: {weight or 'belirtilmemiş'}\n"
+            f"🌸 Alerjiler: {allergies or 'yok'}\n🩺 Hastalıklar: {conditions or 'yok'}\n💊 Diğer ilaçlar: {current_drugs or 'yok'}\n"
+            f"🤰 Hamile mi?: {'Evet' if pregnant else 'Hayır'}\n🚗 Araç kullanıyor mu?: {'Evet' if driving else 'Hayır'}\n\n"
+            f"🧾 Metin:\n{chunk}"
         )
 
         res = client.chat.completions.create(
             model="gpt-3.5-turbo-1106",
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
-            max_tokens=700
+            max_tokens=800
         )
         content = res.choices[0].message.content
 
@@ -106,14 +121,13 @@ def get_summary(
                 title = lines[0].strip()
                 summary = "- " + "\n- ".join([
                     line.strip(" -") for line in lines[1:]
-                    if "belirtilmemi" not in line.lower() and line.strip()
+                    if line.strip()
                 ])
                 if gender == "male":
-                    summary = re.sub(r"- Hamilelik.*?(\n|$)", "", summary, flags=re.IGNORECASE)
+                    summary = re.sub(r"-? ?Hamilelik.*?(\n|$)", "", summary, flags=re.IGNORECASE)
                 if title not in collected_summaries:
                     collected_summaries[title] = summary
         elif content.strip():
-            # fallback: içerik varsa ama regex tutmadıysa direkt olarak ekle
             collected_summaries["Genel Bilgi"] = content.strip()
 
     if age and weight and collected_summaries:
@@ -126,11 +140,11 @@ def get_summary(
 
     return JSONResponse(
         content={
-        "drugName": drug_name,
-        "summaries": collected_summaries,
-        "purposes": list(collected_summaries.keys())
-    },
-    media_type="application/json; charset=utf-8"
+            "drugName": drug_name,
+            "summaries": collected_summaries,
+            "purposes": list(collected_summaries.keys())
+        },
+        media_type="application/json; charset=utf-8"
     )
 
 @app.get("/")
