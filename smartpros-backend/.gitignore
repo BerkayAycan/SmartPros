@@ -1,0 +1,11 @@
+# .env dosyasını gizle
+.env
+
+# node_modules klasörünü gizle
+node_modules/
+
+# log dosyaları
+*.log
+
+# geçici dosyalar
+temp/

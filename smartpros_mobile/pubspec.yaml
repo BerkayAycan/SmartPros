@@ -1,0 +1,25 @@
+name: smartpros_mobile
+description: SmartPros - Kişiye özel ilaç özeti uygulaması
+publish_to: "none"
+
+version: 1.0.0+1
+
+environment:
+  sdk: ">=2.19.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^0.13.6
+  shared_preferences: ^2.2.2
+  autocomplete_textfield: ^2.0.0
+
+  # Flutter SDK'dan gelen varsayılanlar
+  cupertino_icons: ^1.0.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
