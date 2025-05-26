@@ -15,12 +15,13 @@ import warnings
 import logging
 import sys
 import re
+from override_info import override_info
 
 warnings.filterwarnings("ignore")
 logging.getLogger("pdfplumber").setLevel(logging.CRITICAL)
 sys.stderr = open(os.devnull, 'w')
 
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+pytesseract.pytesseract.tesseract_cmd = r"C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
 
 env_path = Path(__file__).parents[1] / ".env"
 load_dotenv(dotenv_path=env_path, override=True)
@@ -64,6 +65,8 @@ def get_summary(
     pregnant: bool = Query(None),
     driving: bool = Query(None)
 ):
+    key = drug_name.upper().split()[0]
+
     match = df[df["ilaç adı"].str.contains(drug_name, case=False, na=False)]
     if match.empty:
         return {"error": "İlaç bulunamadı."}
@@ -86,7 +89,9 @@ def get_summary(
     collected_summaries = {}
 
     for chunk in chunks:
+        correction = override_info.get(key, {}).get("correction_prompt", "")
         prompt = (
+            correction + "\n\n" +
             "🔬 Sen bir sağlık asistanısın. Aşağıdaki prospektüs metnini özetle. Her özet bloğu, ilacın 'Kullanım Amacı' başlığına göre gruplanmalı.\n"
             "📌 Özette aşağıdaki başlıklar yer almalı (her biri için mantıklı bir web emojisiyle başla):\n"
             "💊 Kullanım amacı\n⏱️ Doz ve sıklık\n🧪 Alerjen içerikler\n🤕 Yan etkiler\n⚠️ Kritik uyarılar\n\n"
